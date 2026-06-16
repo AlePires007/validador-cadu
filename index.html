@@ -1,37 +1,232 @@
-// Função de limpeza absoluta: remove TUDO que não for número (0-9)
-function clean(str) { 
-    return str.replace(/[^0-9]/g, ''); 
-}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validador de Comprovantes - Saneamento</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #0056b3;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --bg-color: #f4f7f6;
+            --card-bg: #ffffff;
+        }
 
-function processData(rawData) {
-    const numbersOnly = clean(rawData);
-    
-    if (state === 'RECEIPT') {
-        receiptCode = numbersOnly; // Armazena tudo
-        addMessage(`Comprovante lido! Total de dígitos identificados: ${receiptCode.length}`, 'bot');
-        state = 'BILL_CHOICE';
-        renderStepTwoOptions();
-    } else if (state === 'BILL_INPUT') {
-        compare(numbersOnly);
-    }
-}
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
 
-function compare(inputCode) {
-    const cleanInput = clean(inputCode);
-    
-    // Debug visual no console para você entender o que está acontecendo
-    console.log("Comprovante lido (limpo):", receiptCode);
-    console.log("Input do usuário (limpo):", cleanInput);
+        .container {
+            background-color: var(--card-bg);
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 100%;
+        }
 
-    // Verificação inteligente: 
-    // O código digitado existe DENTRO do código do comprovante?
-    if (receiptCode.includes(cleanInput) && cleanInput.length > 10) {
-        addMessage("✅ Pagamento Validado com sucesso!", 'bot');
-    } else {
-        addMessage(`❌ Divergência! Os números não conferem.`, 'bot');
-        addMessage(`Dica: O sistema leu ${receiptCode.length} dígitos. Verifique se o código digitado está completo.`, 'bot');
-    }
-    
-    // Reset para evitar loops
-    document.getElementById('controlsArea').innerHTML = '<button onclick="location.reload()">Novo Validador</button>';
-}
+        h2 {
+            color: var(--primary-color);
+            text-align: center;
+            margin-bottom: 5px;
+        }
+
+        p.subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 25px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background-color: #004494;
+        }
+
+        button:disabled {
+            background-color: #999;
+            cursor: not-allowed;
+        }
+
+        #result-box {
+            margin-top: 25px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .match {
+            background-color: #d4edda;
+            color: var(--success-color);
+            border: 1px solid #c3e6cb;
+        }
+
+        .mismatch {
+            background-color: #f8d7da;
+            color: var(--danger-color);
+            border: 1px solid #f5c6cb;
+        }
+
+        #loading {
+            display: none;
+            text-align: center;
+            margin-top: 15px;
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+
+        .extracted-text {
+            margin-top: 15px;
+            font-size: 0.8em;
+            color: #555;
+            background: #eee;
+            padding: 10px;
+            border-radius: 4px;
+            word-break: break-all;
+            text-align: left;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Validador de Pagamento</h2>
+        <p class="subtitle">Módulo de Liberação Rápida de Religação</p>
+
+        <div class="form-group">
+            <label for="linhaDigitavel">Linha Digitável da Conta em Aberto (Sistema):</label>
+            <input type="text" id="linhaDigitavel" placeholder="Ex: 82600000000 0 00000000000 0...">
+            <small style="color: #777;">*Pode conter espaços ou pontos</small>
+        </div>
+
+        <div class="form-group">
+            <label for="comprovanteImg">Comprovante de Pagamento do Cliente:</label>
+            <input type="file" id="comprovanteImg" accept="image/*">
+        </div>
+
+        <button id="btnAnalisar" onclick="analisarComprovante()">Analisar e Validar Comprovante</button>
+
+        <div id="loading">Processando imagem com IA (OCR)... Aguarde.</div>
+
+        <div id="result-box"></div>
+        <div id="extracted-data" class="extracted-text"></div>
+    </div>
+
+    <script>
+        // Função para limpar a string, deixando apenas números
+        function extrairApenasNumeros(texto) {
+            return texto.replace(/\D/g, '');
+        }
+
+        async function analisarComprovante() {
+            const inputLinha = document.getElementById('linhaDigitavel').value;
+            const inputFile = document.getElementById('comprovanteImg').files[0];
+            const resultBox = document.getElementById('result-box');
+            const extractedDataBox = document.getElementById('extracted-data');
+            const btn = document.getElementById('btnAnalisar');
+            const loading = document.getElementById('loading');
+
+            // Validações iniciais
+            if (!inputLinha) {
+                alert('Por favor, insira a linha digitável esperada pelo sistema.');
+                return;
+            }
+            if (!inputFile) {
+                alert('Por favor, envie a imagem do comprovante.');
+                return;
+            }
+
+            // Normaliza a linha do sistema (apenas números)
+            const linhaSistemaPura = extrairApenasNumeros(inputLinha);
+
+            // Interface em modo de carregamento
+            btn.disabled = true;
+            loading.style.display = 'block';
+            resultBox.style.display = 'none';
+            extractedDataBox.style.display = 'none';
+
+            try {
+                // Inicia o Tesseract (Utilizando idioma português)
+                const worker = await Tesseract.createWorker('por');
+                const ret = await worker.recognize(inputFile);
+                const textoExtraido = ret.data.text;
+                await worker.terminate();
+
+                // Limpa o texto extraído do OCR para procurar os números
+                const textoOcrPuro = extrairApenasNumeros(textoExtraido);
+
+                // Lógica de Comparação
+                // Contas de consumo (água, luz) geralmente têm 48 dígitos.
+                // Verificamos se a sequência de números do sistema está contida no comprovante lido.
+                
+                const isValid = textoOcrPuro.includes(linhaSistemaPura);
+
+                // Exibição dos Resultados
+                resultBox.style.display = 'block';
+                extractedDataBox.style.display = 'block';
+                
+                if (isValid) {
+                    resultBox.className = 'match';
+                    resultBox.innerHTML = '✅ SUCESSO: Linha digitável encontrada no comprovante!<br><br>Ordem de Serviço liberada para integração.';
+                } else {
+                    resultBox.className = 'mismatch';
+                    resultBox.innerHTML = '❌ DIVERGÊNCIA: O comprovante não corresponde à conta informada.<br><br>Encaminhar para análise humana.';
+                }
+
+                extractedDataBox.innerHTML = `<strong>O que a IA leu (Apenas Números):</strong><br> ${textoOcrPuro || 'Nenhum número detectado'}`;
+
+            } catch (error) {
+                console.error(error);
+                alert('Erro ao processar a imagem. Tente uma imagem com melhor resolução.');
+            } finally {
+                // Restaura a interface
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        }
+    </script>
+
+</body>
+</html>
