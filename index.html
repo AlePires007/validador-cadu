@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CADU - Validador de Religação (PDF/IMG)</title>
+    <title>CADU - Validador de Religação</title>
     
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script>
-        // Configura o worker do PDF.js
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
     </script>
 
@@ -224,7 +223,7 @@
             scrollToBottom();
         }
 
-        function apenasNumeros(texto) { return texto.replace(/\D/g, ''); }
+        function apenasNumeros(texto) { return texto ? texto.replace(/\D/g, '') : ''; }
 
         function enviarLinhaDigitavel() {
             const input = document.getElementById("linhaDigitavelInput");
@@ -241,22 +240,19 @@
             }, 600);
         }
 
-        // Converte a primeira página do PDF para Imagem usando PDF.js
-        async function converterPDFParaImagem(file) {
-            const fileURL = URL.createObjectURL(file);
-            const pdf = await pdfjsLib.getDocument(fileURL).promise;
-            const page = await pdf.getPage(1);
+        // Lógica NATIVA para extrair texto de PDF (Evita travamentos no Mac/Safari)
+        async function extrairTextoNativoPDF(file) {
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let textoCompleto = "";
             
-            // Escala 2.0 aumenta a resolução para o OCR ler melhor
-            const viewport = page.getViewport({ scale: 2.0 });
-            
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-            
-            await page.render({ canvasContext: context, viewport: viewport }).promise;
-            return canvas.toDataURL('image/jpeg');
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                const pageText = textContent.items.map(item => item.str).join(' ');
+                textoCompleto += pageText + " ";
+            }
+            return textoCompleto;
         }
 
         async function processarArquivo() {
@@ -269,31 +265,28 @@
             addUserMessage(`📄 Arquivo Enviado (${isPDF ? 'PDF' : 'Imagem'})`);
             document.getElementById("step2").classList.add("hidden");
 
-            const loadingMsg = addBotMessage('<div class="typing-indicator"><span></span><span></span><span></span></div> Lendo documento com Inteligência Artificial...');
+            const loadingMsg = addBotMessage('<div class="typing-indicator"><span></span><span></span><span></span></div> Processando documento...');
 
             try {
-                let imagemParaOCR = file;
+                let textoExtraido = "";
 
                 if (isPDF) {
-                    imagemParaOCR = await converterPDFParaImagem(file);
+                    // Extração ultrarrápida nativa
+                    textoExtraido = await extrairTextoNativoPDF(file);
+                } else {
+                    // Se for JPG/PNG, usamos Inteligência Artificial
+                    const worker = await Tesseract.createWorker('por');
+                    const ret = await worker.recognize(file);
+                    textoExtraido = ret.data.text;
+                    await worker.terminate();
                 }
-
-                // Inicia OCR
-                const worker = await Tesseract.createWorker('por');
-                const ret = await worker.recognize(imagemParaOCR);
-                const textoExtraido = ret.data.text;
-                await worker.terminate();
 
                 const ocrNumeros = apenasNumeros(textoExtraido);
                 
-                // LÓGICA DE VALIDAÇÃO INTELIGENTE (Contas de Consumo)
-                // Pega os 4 blocos principais (44 dígitos) ignorando a formatação final
+                // Validação Inteligente: Procura os blocos
                 const bloco1 = linhaSistemaLimpa.substring(0, 11);
                 const bloco2 = linhaSistemaLimpa.substring(11, 22);
-                const bloco3 = linhaSistemaLimpa.substring(22, 33);
-                const bloco4 = linhaSistemaLimpa.substring(33, 44);
 
-                // Verifica se os blocos centrais foram encontrados no documento do banco
                 const isValid = ocrNumeros.includes(bloco1) && ocrNumeros.includes(bloco2);
 
                 chatContainer.removeChild(loadingMsg);
@@ -302,20 +295,23 @@
                     addBotMessage(`
                         <span class="success-text">✅ Pagamento Validado!</span><br><br>
                         Os dados do comprovante coincidem com a conta informada. Ordem de Serviço liberada.<br>
-                        <div class="ocr-debug">Blocos identificados com sucesso.</div>
+                        <div class="ocr-debug">Método: ${isPDF ? 'Leitura Nativa' : 'Leitura por IA'}.</div>
                     `);
                 } else {
                     addBotMessage(`
                         <span class="error-text">❌ Divergência Encontrada</span><br><br>
-                        A leitura automática não encontrou os números exatos. A solicitação foi encaminhada para um atendente humano.
-                        <div class="ocr-debug">Total de números extraídos: ${ocrNumeros.length}</div>
+                        O comprovante enviado não possui os mesmos números da conta.
                     `);
                 }
 
             } catch (error) {
-                console.error(error);
+                console.error("Erro interno:", error);
                 chatContainer.removeChild(loadingMsg);
-                addBotMessage(`⚠️ Ocorreu um erro no navegador ao processar o arquivo. Tente rodar a aplicação através de um Servidor Web Local (ex: localhost). Erro técnico: ${error.message}`);
+                
+                // Tratamento seguro para erros do Safari (evita o "undefined")
+                const msgErro = error instanceof Error ? error.message : JSON.stringify(error);
+                
+                addBotMessage(`⚠️ Houve uma falha no processamento. Tente fechar e abrir o navegador. Detalhe técnico: ${msgErro}`);
                 document.getElementById("step2").classList.remove("hidden");
             }
         }
