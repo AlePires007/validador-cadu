@@ -3,118 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CADU - Validador Inteligente</title>
+    <title>CADU - Validador de Pagamento</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-        
-        let ocrWorker = null;
-        async function getOCRWorker() {
-            if (!ocrWorker) ocrWorker = await Tesseract.createWorker('por');
-            return ocrWorker;
-        }
-    </script>
     <style>
-        :root { --main-blue: #1a2b5c; }
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .app { width: 100%; max-width: 400px; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        .btn { width: 100%; padding: 15px; margin: 5px 0; border: none; border-radius: 10px; background: var(--main-blue); color: white; cursor: pointer; font-weight: bold; }
+        :root { --main-blue: #1a2b5c; --bg-gray: #f5f6f8; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .app-container { width: 100%; max-width: 400px; height: 90vh; background: white; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: flex; flex-direction: column; overflow: hidden; }
+        .chat-area { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .bubble { padding: 12px 16px; border-radius: 18px; max-width: 85%; font-size: 14px; line-height: 1.4; }
+        .bot { background-color: var(--bg-gray); align-self: flex-start; border-bottom-left-radius: 4px; }
+        .user { background-color: var(--main-blue); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+        .controls { padding: 20px; border-top: 1px solid #eee; display: flex; flex-direction: column; gap: 10px; }
+        button { padding: 15px; border: none; border-radius: 12px; background: var(--main-blue); color: white; font-weight: bold; cursor: pointer; }
         .hidden { display: none; }
-        .log { margin-top: 15px; padding: 10px; border-radius: 8px; background: #f9f9f9; font-size: 14px; }
     </style>
 </head>
 <body>
 
-<div class="app">
-    <div id="stepArea">
-        <h3 id="title">1. Informar Conta</h3>
-        <p id="desc">Escolha como fornecer os dados da conta:</p>
-        
-        <div id="inputOptions">
-            <input type="text" id="manualInput" placeholder="Digitar linha digitável" style="width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box;">
-            <button class="btn" onclick="processarManual()">Usar Linha Digitável</button>
-            
-            <p style="text-align: center; margin: 15px 0;">OU</p>
-            
-            <button class="btn" onclick="document.getElementById('fileInput').click()">📸 Tirar Foto / Carregar</button>
-            <input type="file" id="fileInput" class="hidden" accept="image/*,application/pdf" capture="environment" onchange="processarArquivo(this)">
-        </div>
+<div class="app-container">
+    <div class="chat-area" id="chatArea">
+        <div class="bubble bot">Olá! Sou a Assistente Virtual do CADU. Vou te auxiliar na validação do seu pagamento.</div>
+        <div class="bubble bot">Para começar, preciso que você envie o **comprovante de pagamento**.</div>
     </div>
     
-    <div id="resultArea" class="log hidden"></div>
-    <button id="resetBtn" class="btn hidden" onclick="resetApp()">Validar outro comprovante</button>
+    <div class="controls">
+        <input type="file" id="fileInput" class="hidden" accept="image/*,application/pdf" onchange="handleFile(this.files[0])">
+        <button onclick="document.getElementById('fileInput').click()">📁 Enviar Arquivo / Foto</button>
+        <button id="manualBtn" class="hidden" onclick="askManualInput()">Digitar manualmente</button>
+    </div>
 </div>
 
 <script>
-    let referencia = "";
-    let etapa = 1; // 1 = conta, 2 = comprovante
+    let state = 'RECEIPT'; // RECEIPT or BILL
+    let receiptData = "";
 
-    function apenasNumeros(t) { return t.replace(/\D/g, ''); }
-
-    async function processarManual() {
-        const val = apenasNumeros(document.getElementById('manualInput').value);
-        if (val.length < 10) return alert("Linha muito curta!");
-        definirReferencia(val);
-    }
-
-    async function processarArquivo(input) {
-        if (!input.files[0]) return;
-        const file = input.files[0];
-        const status = document.getElementById('resultArea');
-        status.classList.remove('hidden');
-        status.innerText = "Lendo arquivo...";
+    async function handleFile(file) {
+        addMessage(file.name, 'user');
+        addMessage("Processando documento...", 'bot');
 
         try {
-            let texto = "";
+            let text = "";
             if (file.type === 'application/pdf') {
                 const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
                 const page = await pdf.getPage(1);
                 const content = await page.getTextContent();
-                texto = content.items.map(i => i.str).join(' ');
+                text = content.items.map(i => i.str).join(' ');
             } else {
-                const worker = await getOCRWorker();
+                const worker = await Tesseract.createWorker('por');
                 const ret = await worker.recognize(file);
-                texto = ret.data.text;
+                text = ret.data.text;
+                await worker.terminate();
             }
-            
-            if (etapa === 1) definirReferencia(apenasNumeros(texto));
-            else validarFinal(apenasNumeros(texto));
-            
+
+            processResult(text);
         } catch (e) {
-            status.innerText = "Erro ao ler arquivo: " + e.message;
+            addMessage("Erro ao ler o arquivo. Tente novamente com uma foto mais nítida.", 'bot');
         }
     }
 
-    function definirReferencia(val) {
-        referencia = val;
-        etapa = 2;
-        document.getElementById('title').innerText = "2. Informar Comprovante";
-        document.getElementById('desc').innerText = "Agora envie a foto ou PDF do comprovante:";
-        document.getElementById('resultArea').innerText = "Conta salva com sucesso!";
-    }
-
-    function validarFinal(comprovante) {
-        const status = document.getElementById('resultArea');
-        const match = comprovante.includes(referencia.substring(0, 10)); // Validação robusta
-        
-        if (match) {
-            status.innerHTML = "<b style='color:green'>✅ VÁLIDO!</b><br>Os dados coincidem.";
+    function processResult(text) {
+        const numbers = text.replace(/\D/g, '');
+        if (state === 'RECEIPT') {
+            receiptData = numbers.substring(0, 20); // Simulação de extração
+            addMessage("Comprovante lido com sucesso! Identifiquei o registro: " + receiptData, 'bot');
+            addMessage("Agora, por favor, envie o **Código de Barras ou Linha Digitável** da conta que deseja validar.", 'bot');
+            state = 'BILL';
         } else {
-            status.innerHTML = "<b style='color:red'>❌ DIVERGÊNCIA!</b><br>Os números não batem.";
+            const billData = numbers.substring(0, 20);
+            if (billData.includes(receiptData.substring(0, 10))) {
+                addMessage("✅ Pagamento Validado! Os dados coincidem.", 'bot');
+            } else {
+                addMessage("❌ Divergência encontrada! Os dados não conferem.", 'bot');
+            }
         }
-        document.getElementById('resetBtn').classList.remove('hidden');
-        document.getElementById('inputOptions').classList.add('hidden');
     }
 
-    function resetApp() {
-        etapa = 1;
-        referencia = "";
-        document.getElementById('title').innerText = "1. Informar Conta";
-        document.getElementById('desc').innerText = "Escolha como fornecer os dados da conta:";
-        document.getElementById('inputOptions').classList.remove('hidden');
-        document.getElementById('resultArea').classList.add('hidden');
-        document.getElementById('resetBtn').classList.add('hidden');
+    function addMessage(text, sender) {
+        const chat = document.getElementById('chatArea');
+        chat.innerHTML += `<div class="bubble ${sender}">${text}</div>`;
+        chat.scrollTop = chat.scrollHeight;
     }
 </script>
 
