@@ -2,37 +2,62 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>CADU - Validador (Modo Estável)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CADU - Validador</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; }
-        .card { background: white; padding: 25px; border-radius: 15px; width: 100%; max-width: 400px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        .debug-box { background: #eee; padding: 10px; font-family: monospace; font-size: 12px; margin: 10px 0; border-radius: 5px; word-break: break-all; }
-        button { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #1a2b5c; color: white; cursor: pointer; margin-top: 10px; }
+        /* CSS RESPONSIVO */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background: #f0f2f5; 
+            margin: 0; 
+            display: flex; 
+            justify-content: center; 
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .card { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 15px; 
+            width: 100%; 
+            max-width: 400px; /* Fica perfeito no celular e no Mac */
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        input, button { 
+            width: 100%; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 10px; 
+            border: 1px solid #ccc;
+            box-sizing: border-box; /* Impede que o botão fique maior que a tela */
+        }
+        button { background: #1a2b5c; color: white; border: none; font-weight: bold; }
+        .debug { font-size: 12px; color: #666; background: #eee; padding: 10px; border-radius: 5px; word-break: break-all; margin-top: 10px; }
     </style>
 </head>
 <body>
 
 <div class="card">
     <h3>Validador CADU</h3>
-    <input type="text" id="referencia" placeholder="Linha digitável esperada" style="width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px;">
-    <input type="file" id="fileInput" accept="application/pdf,image/*">
-    <div id="debug" class="debug-box">O que o sistema leu aparecerá aqui...</div>
-    <button onclick="processar()">Validar Agora</button>
+    <input type="text" id="referencia" placeholder="Linha digitável esperada">
+    <input type="file" id="fileInput" accept="application/pdf,image/*" capture="environment">
+    <button onclick="iniciarProcessamento()">Validar Agora</button>
+    <div id="status" class="debug">Aguardando...</div>
 </div>
 
 <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
-    async function processar() {
+    async function iniciarProcessamento() {
         const file = document.getElementById('fileInput').files[0];
         const ref = document.getElementById('referencia').value.replace(/\D/g, '');
-        const debug = document.getElementById('debug');
+        const status = document.getElementById('status');
         
         if (!file || !ref) return alert("Selecione um arquivo e informe a referência.");
-        
-        debug.innerText = "Lendo arquivo...";
-        
+        status.innerText = "Processando... aguarde.";
+
         try {
             let texto = "";
             if (file.type === 'application/pdf') {
@@ -41,20 +66,25 @@
                 const content = await page.getTextContent();
                 texto = content.items.map(i => i.str).join(' ');
             } else {
-                debug.innerText = "Atenção: A leitura de imagem está desativada para garantir estabilidade no Safari.";
-                return;
+                // OCR com tratamento de erro explicito
+                const worker = await Tesseract.createWorker('por');
+                const ret = await worker.recognize(file);
+                texto = ret.data.text;
+                await worker.terminate();
             }
 
             const lido = texto.replace(/\D/g, '');
-            debug.innerText = "LEITURA: " + lido;
+            status.innerText = "LIDO: " + (lido.substring(0, 20) + "...");
 
             if (lido.includes(ref.substring(0, 10))) {
                 alert("✅ VÁLIDO! Os dados conferem.");
             } else {
-                alert("❌ DIVERGÊNCIA. Os dados não batem.");
+                alert("❌ DIVERGÊNCIA. Os dados não conferem.");
             }
         } catch (e) {
-            debug.innerText = "ERRO: " + e.message;
+            // SE A IMAGEM FALHAR, O USUÁRIO SABERÁ POR QUE
+            status.innerText = "Erro no OCR: " + e.message;
+            alert("A leitura automática falhou. Verifique se a foto está nítida ou digite a linha digitável manualmente.");
         }
     }
 </script>
