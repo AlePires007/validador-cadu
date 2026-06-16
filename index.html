@@ -1,116 +1,37 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CADU - Validador de Pagamento</title>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
-    <style>
-        :root { --main-blue: #1a2b5c; --bg-gray: #f5f6f8; }
-        body { font-family: 'Segoe UI', sans-serif; background-color: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .app-container { width: 100%; max-width: 400px; height: 90vh; background: white; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: flex; flex-direction: column; overflow: hidden; }
-        .chat-area { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-        .bubble { padding: 12px 16px; border-radius: 18px; max-width: 85%; font-size: 14px; line-height: 1.4; word-break: break-all; }
-        .bot { background-color: var(--bg-gray); align-self: flex-start; border-bottom-left-radius: 4px; }
-        .user { background-color: var(--main-blue); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
-        .controls { padding: 20px; border-top: 1px solid #eee; display: flex; flex-direction: column; gap: 10px; }
-        button { padding: 12px; border: none; border-radius: 10px; background: var(--main-blue); color: white; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        button:hover { opacity: 0.9; }
-        .hidden { display: none; }
-    </style>
-</head>
-<body>
+// Função de limpeza absoluta: remove TUDO que não for número (0-9)
+function clean(str) { 
+    return str.replace(/[^0-9]/g, ''); 
+}
 
-<div class="app-container">
-    <div class="chat-area" id="chatArea">
-        <div class="bubble bot">Olá! Sou a Assistente Virtual do CADU. Vou te auxiliar na validação do seu pagamento.</div>
-    </div>
+function processData(rawData) {
+    const numbersOnly = clean(rawData);
     
-    <div class="controls" id="controlsArea">
-        <button onclick="document.getElementById('fileInput').click()">Enviar Comprovante (Foto/PDF)</button>
-        <input type="file" id="fileInput" class="hidden" accept="image/*,application/pdf" onchange="handleFile(this)">
-    </div>
-</div>
-
-<script>
-    let state = 'RECEIPT'; // RECEIPT, BILL_CHOICE, BILL_INPUT
-    let receiptCode = "";
-
-    function addMessage(text, sender) {
-        const chat = document.getElementById('chatArea');
-        chat.innerHTML += `<div class="bubble ${sender}">${text}</div>`;
-        chat.scrollTop = chat.scrollHeight;
+    if (state === 'RECEIPT') {
+        receiptCode = numbersOnly; // Armazena tudo
+        addMessage(`Comprovante lido! Total de dígitos identificados: ${receiptCode.length}`, 'bot');
+        state = 'BILL_CHOICE';
+        renderStepTwoOptions();
+    } else if (state === 'BILL_INPUT') {
+        compare(numbersOnly);
     }
+}
 
-    // Função universal de limpeza: extrai apenas números
-    function clean(str) { return str.replace(/\D/g, ''); }
+function compare(inputCode) {
+    const cleanInput = clean(inputCode);
+    
+    // Debug visual no console para você entender o que está acontecendo
+    console.log("Comprovante lido (limpo):", receiptCode);
+    console.log("Input do usuário (limpo):", cleanInput);
 
-    async function handleFile(input) {
-        if (!input.files[0]) return;
-        const file = input.files[0];
-        addMessage(file.name, 'user');
-        addMessage("Processando arquivo...", 'bot');
-
-        try {
-            let text = "";
-            if (file.type === 'application/pdf') {
-                const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
-                const page = await pdf.getPage(1);
-                const content = await page.getTextContent();
-                text = content.items.map(i => i.str).join(' ');
-            } else {
-                const worker = await Tesseract.createWorker('por');
-                const ret = await worker.recognize(file);
-                text = ret.data.text;
-                await worker.terminate();
-            }
-
-            processData(clean(text));
-        } catch (e) {
-            addMessage("Erro na leitura. Tente uma imagem mais nítida ou digite manualmente.", 'bot');
-        }
+    // Verificação inteligente: 
+    // O código digitado existe DENTRO do código do comprovante?
+    if (receiptCode.includes(cleanInput) && cleanInput.length > 10) {
+        addMessage("✅ Pagamento Validado com sucesso!", 'bot');
+    } else {
+        addMessage(`❌ Divergência! Os números não conferem.`, 'bot');
+        addMessage(`Dica: O sistema leu ${receiptCode.length} dígitos. Verifique se o código digitado está completo.`, 'bot');
     }
-
-    function processData(numbers) {
-        if (state === 'RECEIPT') {
-            receiptCode = numbers; 
-            addMessage(`Comprovante lido! Registro: ${receiptCode.substring(0, 15)}...`, 'bot');
-            state = 'BILL_CHOICE';
-            renderStepTwoOptions();
-        } else if (state === 'BILL_INPUT') {
-            compare(numbers);
-        }
-    }
-
-    function renderStepTwoOptions() {
-        addMessage("Agora, como deseja nos informar o código da conta?", 'bot');
-        const controls = document.getElementById('controlsArea');
-        controls.innerHTML = `
-            <button onclick="document.getElementById('fileInput').click()">📷 Enviar Foto / Arquivo</button>
-            <button style="background:#555" onclick="showManualInput()">⌨️ Digitar Manualmente</button>
-        `;
-    }
-
-    function showManualInput() {
-        state = 'BILL_INPUT';
-        const controls = document.getElementById('controlsArea');
-        controls.innerHTML = `
-            <input type="text" id="manualInput" placeholder="Digite aqui o código..." style="padding:10px; border-radius:10px; border:1px solid #ccc;">
-            <button onclick="compare(clean(document.getElementById('manualInput').value))">Validar Código</button>
-        `;
-    }
-
-    function compare(billCode) {
-        // Compara ignorando espaços e caracteres especiais (limpeza feita no clean())
-        if (billCode.includes(receiptCode.substring(0, 10))) {
-            addMessage("✅ Pagamento Validado com sucesso!", 'bot');
-        } else {
-            addMessage("❌ Divergência! Os números não conferem.", 'bot');
-        }
-        document.getElementById('controlsArea').innerHTML = '<button onclick="location.reload()">Reiniciar</button>';
-    }
-</script>
-
-</body>
-</html>
+    
+    // Reset para evitar loops
+    document.getElementById('controlsArea').innerHTML = '<button onclick="location.reload()">Novo Validador</button>';
+}
