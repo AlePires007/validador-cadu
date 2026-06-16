@@ -2,80 +2,121 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <title>CADU - Validador</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CADU - Validador Inteligente</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
         
-        // --- GERENCIADOR DE OCR ROBUSTO PARA SAFARI ---
         let ocrWorker = null;
-
-        async function getWorker() {
-            // Se o worker já existe e não foi morto pelo Safari, retorna ele
-            if (ocrWorker) return ocrWorker;
-            
-            // Caso contrário, cria um novo
-            ocrWorker = await Tesseract.createWorker('por');
+        async function getOCRWorker() {
+            if (!ocrWorker) ocrWorker = await Tesseract.createWorker('por');
             return ocrWorker;
         }
     </script>
     <style>
-        body { font-family: sans-serif; background: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .container { background: white; padding: 20px; border-radius: 20px; width: 350px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
-        .log { margin-top: 20px; font-size: 14px; color: #555; }
-        button { width: 100%; padding: 15px; background: #1a2b5c; color: white; border: none; border-radius: 10px; cursor: pointer; }
+        :root { --main-blue: #1a2b5c; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .app { width: 100%; max-width: 400px; background: white; padding: 20px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .btn { width: 100%; padding: 15px; margin: 5px 0; border: none; border-radius: 10px; background: var(--main-blue); color: white; cursor: pointer; font-weight: bold; }
+        .hidden { display: none; }
+        .log { margin-top: 15px; padding: 10px; border-radius: 8px; background: #f9f9f9; font-size: 14px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h3>Validador CADU</h3>
-        <input type="text" id="linhaInput" placeholder="Linha digitável" style="width: 100%; padding: 10px; box-sizing: border-box; margin-bottom: 10px;">
-        <input type="file" id="fileInput" accept="image/*,application/pdf" style="margin-bottom: 10px;">
-        <button onclick="processar()">Validar</button>
-        <div id="status" class="log">Aguardando arquivo...</div>
-    </div>
 
-    <script>
-        async function processar() {
-            const status = document.getElementById('status');
-            const file = document.getElementById('fileInput').files[0];
-            const linha = document.getElementById('linhaInput').value.replace(/\D/g, '');
+<div class="app">
+    <div id="stepArea">
+        <h3 id="title">1. Informar Conta</h3>
+        <p id="desc">Escolha como fornecer os dados da conta:</p>
+        
+        <div id="inputOptions">
+            <input type="text" id="manualInput" placeholder="Digitar linha digitável" style="width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box;">
+            <button class="btn" onclick="processarManual()">Usar Linha Digitável</button>
             
-            if (!file || !linha) return alert("Preencha tudo");
-            status.innerText = "Processando...";
+            <p style="text-align: center; margin: 15px 0;">OU</p>
+            
+            <button class="btn" onclick="document.getElementById('fileInput').click()">📸 Tirar Foto / Carregar</button>
+            <input type="file" id="fileInput" class="hidden" accept="image/*,application/pdf" capture="environment" onchange="processarArquivo(this)">
+        </div>
+    </div>
+    
+    <div id="resultArea" class="log hidden"></div>
+    <button id="resetBtn" class="btn hidden" onclick="resetApp()">Validar outro comprovante</button>
+</div>
 
-            try {
-                let texto = "";
+<script>
+    let referencia = "";
+    let etapa = 1; // 1 = conta, 2 = comprovante
 
-                if (file.type === 'application/pdf') {
-                    // PDF é leitura nativa (super rápido e estável no Safari)
-                    const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
-                    const page = await pdf.getPage(1);
-                    const content = await page.getTextContent();
-                    texto = content.items.map(i => i.str).join(' ');
-                } else {
-                    // Imagem usa o Tesseract com tratamento de erro
-                    try {
-                        const worker = await getWorker();
-                        const ret = await worker.recognize(file);
-                        texto = ret.data.text;
-                    } catch (e) {
-                        // Se falhou (Safari bloqueou), reseta o worker para tentar do zero depois
-                        ocrWorker = null;
-                        throw new Error("Erro no Safari/OCR. Tente novamente.");
-                    }
-                }
+    function apenasNumeros(t) { return t.replace(/\D/g, ''); }
 
-                if (texto.replace(/\D/g, '').includes(linha.substring(0, 10))) {
-                    status.innerHTML = "<b style='color:green'>✅ Válido!</b>";
-                } else {
-                    status.innerHTML = "<b style='color:red'>❌ Divergência.</b>";
-                }
-            } catch (err) {
-                status.innerHTML = "<b style='color:red'>" + err.message + "</b>";
+    async function processarManual() {
+        const val = apenasNumeros(document.getElementById('manualInput').value);
+        if (val.length < 10) return alert("Linha muito curta!");
+        definirReferencia(val);
+    }
+
+    async function processarArquivo(input) {
+        if (!input.files[0]) return;
+        const file = input.files[0];
+        const status = document.getElementById('resultArea');
+        status.classList.remove('hidden');
+        status.innerText = "Lendo arquivo...";
+
+        try {
+            let texto = "";
+            if (file.type === 'application/pdf') {
+                const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+                const page = await pdf.getPage(1);
+                const content = await page.getTextContent();
+                texto = content.items.map(i => i.str).join(' ');
+            } else {
+                const worker = await getOCRWorker();
+                const ret = await worker.recognize(file);
+                texto = ret.data.text;
             }
+            
+            if (etapa === 1) definirReferencia(apenasNumeros(texto));
+            else validarFinal(apenasNumeros(texto));
+            
+        } catch (e) {
+            status.innerText = "Erro ao ler arquivo: " + e.message;
         }
-    </script>
+    }
+
+    function definirReferencia(val) {
+        referencia = val;
+        etapa = 2;
+        document.getElementById('title').innerText = "2. Informar Comprovante";
+        document.getElementById('desc').innerText = "Agora envie a foto ou PDF do comprovante:";
+        document.getElementById('resultArea').innerText = "Conta salva com sucesso!";
+    }
+
+    function validarFinal(comprovante) {
+        const status = document.getElementById('resultArea');
+        const match = comprovante.includes(referencia.substring(0, 10)); // Validação robusta
+        
+        if (match) {
+            status.innerHTML = "<b style='color:green'>✅ VÁLIDO!</b><br>Os dados coincidem.";
+        } else {
+            status.innerHTML = "<b style='color:red'>❌ DIVERGÊNCIA!</b><br>Os números não batem.";
+        }
+        document.getElementById('resetBtn').classList.remove('hidden');
+        document.getElementById('inputOptions').classList.add('hidden');
+    }
+
+    function resetApp() {
+        etapa = 1;
+        referencia = "";
+        document.getElementById('title').innerText = "1. Informar Conta";
+        document.getElementById('desc').innerText = "Escolha como fornecer os dados da conta:";
+        document.getElementById('inputOptions').classList.remove('hidden');
+        document.getElementById('resultArea').classList.add('hidden');
+        document.getElementById('resetBtn').classList.add('hidden');
+    }
+</script>
+
 </body>
 </html>
